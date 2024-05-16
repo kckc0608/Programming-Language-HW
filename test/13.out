@@ -1,0 +1,9 @@
+function = 3
+operator = 2
+int = 5
+char = 0
+pointer = 0
+array = 5
+selection = 0
+loop = 0
+return = 1
