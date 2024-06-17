@@ -1,0 +1,1390 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{kotex}
+\usepackage{minted} % 소스 코드 하이라이팅
+\usemintedstyle{friendly}
+
+\title{프로그래밍언어론 hw3}
+\author{C011013 권찬}
+\date{2024.05.16}
+
+\begin{document}
+
+\maketitle
+
+\section{Yacc}
+\subsection{YACC 개념}
+YACC (Yet Another Compiler Compiler) 는 유닉스 시스템의 표준 파서 생성기입니다.\\
+YACC 는 보통 LEX 와 함께 쓰이는데, LEX 가 정규표현식을 기반으로 토큰을 생성하면, YACC 는 LEX 가 생성한 토큰을 기반으로 BNF 를 이용해 문법을 정의합니다.\\
+YACC 는 grammar rule 과 각 룰에 따른 action 이 주어지면 이를 컴파일하여 C코드로 구성된 Parser를 생성해줍니다.\\\\
+LEX는 정규표현식을 기반으로 토큰을 생성하는 lex.yy.c 파일을 만듭니다. 이를 기반으로 yylex() 함수를 실행하여 어휘를 분석하고, 어휘를 분석하여 생성된 토큰은 yyparse() 함수의 입력으로 들어와 YACC에 정의된 문법 규칙대로 파싱됩니다.
+
+\subsection{YACC 동작 원리}
+YACC는 State Machine 으로 동작하여 주어지는 토큰들을 BNF 문법에 따라 차근 차근 분석해나갑니다.\\
+특정 상태에서 어떤 토큰이 들어오는지에 따라 각기 다른 상태로 천이되고, 이때 받을 수 있는 토큰들은 BNF 문법에 따라 정해져있습니다.\\
+만약 특정 상태에서 받을 수 있는 토큰이 아닌 토큰이 들어오면 Syntax Error를 발생시킵니다.
+
+\subsection{YACC 구현 설명}
+\subsubsection{Function}
+
+\quad함수 정의, 함수 사용, printf 와 같은 내장 함수 사용 횟수를 카운팅합니다.
+이때 테스트 케이스에 함수가 선언만 되고 정의가 안된 경우는 없으며, 함수가 전방 선언되고 뒷 부분에 정의 된 경우, 뒷 부분에 대해서만 카운트 하는 점을 고려하면 함수의 전방 선언에 대해서는 변수를 세지 않고 무시하면 됩니다.\\\\
+\textbf{1. 함수 정의 세기}\\
+함수의 정의는 yacc에서 function\_definition 이 external\_declaration 으로 reduce될 때 세면 됩니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+external_declaration
+  : function_definition {
+      ary[FUNC_CNT]++;
+
+      ary[INT_CNT] += intParameterCount;
+      intParameterCount = 0;
+
+      ary[CHAR_CNT] += charParameterCount;
+      charParameterCount = 0;
+
+      ary[POINTER_CNT] += pointerParameterCount;
+      pointerParameterCount = 0;
+    }
+\end{minted}
+이때 함수 정의를 파악했다는 것은 함수 정의가 끝났다는 의미이므로, 지금까지 센 int, char, pointer 파라미터 개수도 최종 개수에 반영하도록 하였습니다.
+int, char, pointer 파라미터의 개수 카운팅은 뒤에서 정리하겠습니다.\\\\
+\textbf{2. 함수 호출 세기}\\
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+postfix_expression
+  ...
+  | postfix_expression '(' ')'                          { ary[FUNC_CNT]++; /*함수 호출*/ }
+  | postfix_expression '(' argument_expression_list ')' { ary[FUNC_CNT]++; /*함수 호출*/ }}
+  ...
+\end{minted}
+함수 호출은 postfix\_expression 에서 reduce 되므로 이때 카운트 하였습니다.\\\\
+\textbf{3. 함수 포인터 세기 / 함수 전방 선언 무시}\\
+함수 포인터는 함수의 전방 선언과 그 느낌이 비슷하기 때문에 구분해주어야 했습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+direct_declarator
+  ...
+  | '(' declarator ')' {
+    if (isPointer) {
+      ary[POINTER_CNT]++;
+      isPointer = 0;
+      isPointerFunction = 1; // 포인터 함수 선언의 가능성이 있다.
+    } /* 무조건 변수를 나타낸다. */
+  }
+\end{minted}
+우선 함수 포인터는 반드시 "타입 (*변수명)(인자 타입)" 의 형태를 갖고 있기 때문에 "(*변수명)" 이 나오면 함수 포인터 가능성이 있다고 보고 함수 포인터 체크를 활성화 하였습니다. 함수 포인터는 포인터와 함수를 모두 카운트해야 하는데, 우선 이 형식에서 포인터가 활성화 되었었다면, 함수 포인터가 아닌 경우 포인터 변수에 대한 선언이 되므로 최소한 포인터의 개수는 세는 것이 맞습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+direct_declarator
+  ...
+  | direct_declarator '(' parameter_list ')'  {
+      if (isPointerFunction == 1) {
+        ary[FUNC_CNT]++;
+        isPointerFunction = 0;
+      } else if (isFunctionDeclaration == 0) {
+        isFunctionDeclaration = 1;
+      }
+    }
+\end{minted}
+이때 만약 (파라미터) 형식의 데이터가 나와서 reduce 된다면 함수 포인터 변수를 선언한 것이므로, 함수 count도 증가시킵니다. 그렇지 않다면 함수에 대한 전방 선언으로 보고 전방 선언 체크를 활성화 합니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+direct_declarator
+  ...
+  | direct_declarator '(' ')'                 { if (isFunctionDeclaration == 0) isFunctionDeclaration = 1; }
+\end{minted}
+함수의 전방 선언은 파라미터 없이도 될 수 있기 때문에 이 부분도 체크해줍니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+external_declaration
+  ...
+  | declaration {
+      if (isFunctionDeclaration == 1) { // 함수 전방 선언은 무시한다.
+        #if YYDEBUG
+          printf("\n함수의 전방 선언은 무시합니다.\n");
+        #endif
+        
+        intParameterCount = 0;
+        charParameterCount = 0;
+        pointerParameterCount = 0;
+      }
+      ...
+\end{minted}
+최종적으로 declaration 이 external\_declaration 으로 reduce 될 때 함수의 전방 선언 체크 변수를 확인하여 만약 전방 선언이라면 파라미터의 개수를 세지 않도록 기존에 세어둔 값을 버립니다.
+
+\subsubsection{Operator}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+shift_expression
+  : additive_expression
+  | shift_expression LEFT_OP additive_expression { ary[OP_CNT]++; }
+  | shift_expression RIGHT_OP additive_expression { ary[OP_CNT]++; }
+  ;
+
+additive_expression
+  : multiplicative_expression
+  | additive_expression '+' multiplicative_expression { ary[OP_CNT]++; }
+  | additive_expression '-' multiplicative_expression { ary[OP_CNT]++; }
+  ;
+
+multiplicative_expression
+  : cast_expression
+  | multiplicative_expression '*' cast_expression { ary[OP_CNT]++; }
+  | multiplicative_expression '/' cast_expression { ary[OP_CNT]++; }
+  | multiplicative_expression '%' cast_expression { ary[OP_CNT]++; }
+  ;
+\end{minted}
+이항 연산자의 경우 이런식으로 카운팅하였습니다. 다른 이항 연산도 모두 동일하게 세었기 때문에 일부만 기술하였습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+unary_expression
+  : postfix_expression
+  | INC_OP unary_expression { ary[1]++; }
+  | DEC_OP unary_expression { ary[1]++; }
+  ...
+  ;
+
+postfix_expression
+  ...
+  | postfix_expression '.' IDENTIFIER { ary[OP_CNT]++; }
+  | postfix_expression PTR_OP IDENTIFIER { ary[OP_CNT]++; }
+  | postfix_expression INC_OP { ary[OP_CNT]++; }
+  | postfix_expression DEC_OP { ary[OP_CNT]++; }
+\end{minted}
+++, - - 연산자에 대해서도 과제 명세에 따라 카운팅하였습니다.
+
+\subsubsection{Int / Char / Pointer}
+\quad 먼저 현재 처리하고 있는 type 과 pointer 여부를 체크하기 위해 다음과 같이 체크 변수를 활성화 하였습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+type_specifier
+  : VOID
+  | CHAR {nowType = 1; /*char = 1*/}
+  | SHORT
+  | INT  {nowType = 0; /* int = 0*/}
+  ...
+\end{minted}
+nowType 변수를 이용하여 현재 type 을 확인하였습니다.
+
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+pointer
+  : '*' { isPointer = 1; }
+  | '*' type_qualifier_list
+  | '*' pointer
+  | '*' type_qualifier_list pointer
+  ;
+\end{minted}
+pointer 여부는 위와 같이 *를 만나면 곱셈 연산이 아닌 이상 반드시 포인터가 되므로 포인터 변수에 체크를 활성화하였습니다.\\\\
+\textbf{1. 변수 세기}\\
+\quad 변수를 셀 때는
+\begin{verbatim}int a, b; \end{verbatim}
+와 같이 여러 식별자가 나열될 수 있습니다. 이를 위해 현재 나열된 식별자의 개수를 저장하는 initVarCount 변수를 만들었습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+init_declarator_list
+  : init_declarator                           { initVarCount++; }
+  | init_declarator_list ',' init_declarator  { initVarCount++; }
+  ;
+\end{minted}
+initVarCount 변수에는 위와 같은 BNF 문법에서 식별자 리스트를 init\_declarator\_list로 reduce 할 때 변수의 개수를 카운팅한 값을 저장하였습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+declaration
+  : declaration_specifiers ';'
+  | declaration_specifiers init_declarator_list ';' {
+      if (isTypeDef) {
+        ...
+      } else { // 아니라면 변수/함수에 대한 선언이다.
+        if (isPointer) {
+          ary[POINTER_CNT] += initVarCount;
+        }
+        if (nowType == 0) {
+          /* int 변수 카운트 */
+          #if YYDEBUG
+            printf("\nint 변수 선언: %d개\n\n", initVarCount);
+          #endif
+          ary[INT_CNT] += initVarCount;
+
+        } else if (nowType == 1) {
+          /* char 변수 카운트 */
+          #if YYDEBUG
+            printf("\nchar 변수 선언: %d개\n\n", initVarCount);
+          #endif
+          ary[CHAR_CNT] += initVarCount;
+        }
+      }
+
+      initVarCount = 0;
+      isPointer = 0;
+      nowType = -1;
+      isTypeDef = 0;
+    }
+  ;
+\end{minted}
+식별자가 실제 변수로 선언되도록 reduce될 때 pointer 여부, int, char 여부를 확인하여 각각의 개수를 실제 카운팅 하였습니다.\\\\
+\textbf{2. 파라미터 세기}\\
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+parameter_declaration
+  : declaration_specifiers declarator {
+      if (nowType == 0) {
+        intParameterCount++;
+      } else if (nowType == 1) {
+        charParameterCount++;
+      }
+
+      if (isPointer == 1) {
+        pointerParameterCount++;
+      }
+
+      nowType = -1; 
+      isPointer = 0;
+    }
+  | declaration_specifiers abstract_delarator {
+      if (nowType == 0) {
+        intParameterCount++;
+      } else if (nowType == 1) {
+        charParameterCount++;
+      }
+
+      if (isPointer == 1) {
+        pointerParameterCount++;
+      }
+      
+      nowType = -1; 
+      isPointer = 0;
+    }   
+  | declaration_specifiers  /* 파라미터 변수는 아니고 선언만 있으면 세지 않는다. */ {
+    isPointer = 0;
+    nowType = -1;
+  }
+  ;
+  
+declaration_specifiers
+  ...
+  | type_specifier { isPointer = 0; } // 타입이 나오면 기존 포인터 체크는 변수에 쓰인 포인터가 아님
+  ...
+\end{minted}
+parameter\_declaration 에서 파라미터 변수의 개수를 셉니다. 이때 int a(int, int) 와 같이 선언하는 경우는 파라미터 '변수'를 선언한 것이 아니므로 과제 명세에 따라 세지 않도록 하였습니다. type\_specifier 가 declaration\_specifier 로 reduce 될 때도 pointer 체크를 비활성화 하였습니다. int a(int*, int*) 와 같은 경우를 처리하기 위함입니다.\\\\
+\textbf{3. 구조체에서 세기}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+struct_declarator_list
+  : struct_declarator {initVarCount++;}
+  | struct_declarator_list ',' struct_declarator {initVarCount++;}
+  ;
+\end{minted}
+구조체에서도 마찬가지로 선언된 식별자들의 개수를 미리 세어둡니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+struct_declaration
+  : specifier_qualifier_list struct_declarator_list ';' {
+      if (isPointer) {
+        ary[POINTER_CNT] += initVarCount;
+      }
+      if (nowType == 0) {
+        /* int 변수 카운트 */
+        #if YYDEBUG
+          printf("init int: %d\n\n", initVarCount);
+        #endif
+        ary[INT_CNT] += initVarCount;
+      } else if (nowType == 1) {
+        /* char 변수 카운트 */
+        #if YYDEBUG
+          printf("init char: %d\n\n", initVarCount);
+        #endif
+        ary[CHAR_CNT] += initVarCount;
+      }
+
+      initVarCount = 0;
+      isPointer = 0;
+      nowType = -1;
+  }
+  ;
+\end{minted}
+그리고 구조체 내에서 변수가 선언될 때, 지금까지 세어둔 식별자들을 각각의 타입에 맞춰 카운팅합니다.
+\subsubsection{Array}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+direct_declarator
+  ...
+  | direct_declarator '[' constant_expression ']' { isArray = 1; }
+  | direct_declarator '[' ']' { isArray = 1; }
+  ...
+\end{minted}
+배열의 경우 대괄호가 있으면 배열과 관련된 연산이므로 배열 체크 변수를 활성화 합니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+declarator
+  : pointer direct_declarator { if (isArray) {ary[ARRAY_CNT]++; isArray = 0;} }
+  | direct_declarator         { if (isArray) {ary[ARRAY_CNT]++; isArray = 0;} }
+  ;
+\end{minted}
+배열 체크 변수가 활성화 되었을 때 변수가 선언되었다면 배열 변수로 카운팅 합니다.
+
+\subsubsection{Selection / 반복문}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+statement_list
+  : statement                 { if (isSelection) {ary[SELECTION_CNT]++; isSelection = 0; } }
+  | statement_list statement  { if (isSelection) {ary[SELECTION_CNT]++; isSelection = 0; } }
+  ; // OK
+
+statement
+  ...
+  | selection_statement { isSelection = 1; }
+  | iteration_statement { ary[LOOP_CNT]++; }
+  | jump_statement
+  ;
+\end{minted}
+
+Selection 을 셀 때는, if 로 구성된 구문과 switch로 구성된 구문만 세어야 했습니다.\\
+따라서 selection\_statement에서 바로 세는 것이 아니라, selection\_statement 가 등장하면 selection 체크 변수를 설정하고, statement 가 끝이 났을 때 그 때 반복문 개수를 세도록 하였습니다.\\\\
+반복문은 iteration\_statement 를 만났을 때 바로 세도록 하였습니다.
+\subsubsection{Return문}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+jump_statement
+  : GOTO IDENTIFIER ';'
+  | CONTINUE ';'
+  | BREAK ';'
+  | RETURN ';'            { ary[RETURN_CNT]++; }
+  | RETURN expression ';' { ary[RETURN_CNT]++; }
+  ; // OK
+\end{minted}
+return문은 jump\_statement에서만 등장하기 때문에 이곳에서 카운팅 해주었습니다.
+
+\subsubsection{변수의 선언 위치 자유}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+compound_statement
+  : '{' '}'
+  | '{' statement_list '}'
+  /* | '{' declaration_list '}' // declaration_statement  // test
+  | '{' declaration_list statement_list '}' // 여기에서 둘 사이에 순서를 없애주어야 함. */
+  ; // OK
+\end{minted}
+강의록에 있는 C 언어 BNF 문법에서는 \{ declaration\_list statement\_list \} 부분 때문에 선언하는 부분이 항상 statement 보다 먼저 나와야 했습니다.
+변수의 선언 위치를 자유롭게 해주기 위해서는 이 둘 사이에 존재하는 순서 관계를 없애줄 필요가 있었습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+statement
+  : labeled_statement
+  | compound_statement
+  | declaration_or_expression_statement
+  | selection_statement { isSelection = 1; }
+  | iteration_statement { ary[LOOP_CNT]++; }
+  | jump_statement
+  ;
+
+declaration_or_expression_statement
+  : expression_statement
+  | declaration
+  ;
+\end{minted}
+이를 위해 기존 expression\_statement 대신에 declaration\_or\_expression\_statement 라는 부분을 위와 같이 새로 정의하였습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+compound_statement
+  : '{' '}'
+  | '{' statement_list '}'
+  ;
+\end{minted}
+그리고 compound\_statement 에서는 기존에 문제가 되었던 declaration 관련 부분을 모두 없애주었습니다.
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+iteration_statement
+  : WHILE '(' expression ')' statement
+  | DO statement WHILE '(' expression ')' ';'
+  //| FOR '(' expression_statement expression_statement ')' statement
+  //| FOR '(' expression_statement expression_statement expression ')' statement
+  | FOR '(' declaration_or_expression_statement expression_statement ')' statement
+  | FOR '(' declaration_or_expression_statement expression_statement expression ')' statement
+  ;
+\end{minted}
+마지막으로 반복문에서도 for(int i = 0; i < 10; i++) 과 같은 문장을 처리할 수 있도록 제한을 풀어주었습니다.
+\subsubsection{\#include}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+...
+INCLUDE #(include).*\n
+...
+
+%%
+...
+{INCLUDE} {; }
+...
+\end{minted}
+\quad\#include는 별도 기능을 처리하지 않도록 lex에서 토큰을 생성하지 않고 무시해주었습니다.
+\subsubsection{\#define}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+...
+%%
+...
+#define {return DEFINE;}
+...
+\end{minted}
+\quad\#define은 먼저 lex에서 토큰을 따로 생성해주었습니다.
+
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+external_declaration
+  ...
+  | DEFINE IDENTIFIER CONSTANT { // "#define 식별자 상수" 처리
+    #if YYDEBUG
+      printf("add define : %s\n\n", identifier_name);
+    #endif
+    define_name_array[define_name_array_size++] = identifier_name;
+  }
+  | DEFINE IDENTIFIER STRING_LITERAL { // "#define 식별자 문자열" 처리
+    #if YYDEBUG
+      printf("add str define : %s\n\n", identifier_name);
+    #endif
+    str_define_name_array[str_define_name_array_size++] = identifier_name;
+  }
+\end{minted}
+\quad yacc에서는 external\_delcaration에 \#define을 인식하도록 BNF를 위와 같이 추가하였습니다.
+이때 \#define 구문을 인식하면, lex에서 저장한 식별자 이름을 \#define 심볼 테이블에 상수, 문자열로 구분하여 저장합니다.
+
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+{L}({L}|{D})* {
+  ...
+  // 식별자가 현재 #define constant 심볼 테이블에 있는지 확인
+  for (int i = 0; i < define_name_array_size; i++) {
+    if (strcmp(identifier_name, define_name_array[i]) == 0) {
+      #if DEBUG
+        printf("define name : %s\n\n", identifier_name);
+      #endif
+      return CONSTANT;
+    }
+  }
+
+  // 식별자가 현재 #define 문자열 리터럴 심볼 테이블에 있는지 확인
+  for (int i = 0; i < str_define_name_array_size; i++) {
+    if (strcmp(identifier_name, str_define_name_array[i]) == 0) {
+      #if DEBUG
+        printf("define name : %s\n\n", identifier_name);
+      #endif
+      return STRING_LITERAL;
+    }
+  }
+
+  ...
+} 
+\end{minted}
+\quad lex에서는 이후에 식별자를 읽을 때마다 기존에 저장했던 \#define 심볼 테이블에 식별자가 들어있는지 파악해서 CONSTANT 또는 STRING\_LITERAL 토큰을 돌려줍니다.
+
+\subsubsection{기타 키워드}
+\textbf{1. typedef}\\
+\quad typedef도 \#define과 유사하게 처리합니다.\\
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+...
+declaration
+  : declaration_specifiers ';'
+  | declaration_specifiers init_declarator_list ';' {
+      if (isTypeDef) { // typedef 키워드가 등장했었다면, 새로운 타입에 대한 선언이다.
+        #if YYDEBUG
+          printf("add type : %s\n\n", identifier_name);
+        #endif
+        type_name_array[type_name_array_size] = identifier_name;
+        type_name_array_size++;
+        isTypeDef = 0;
+      } else { // 아니라면 변수/함수에 대한 선언이다.
+        ...
+      }
+    isTypeDef = 0;
+    ...
+\end{minted}
+\quad typedef 도 \#define 과 유사하게 처리합니다.
+만약 typedef 선언이 등장했다면, lex에서 읽은 식별자 이름을 type name 심볼 테이블에 등록합니다.
+
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+{L}({L}|{D})* {
+  identifier_name = strdup(yytext);
+
+  // type name symbol table에 현재 읽은 식별자가 있는지 확인
+  for (int i = 0; i < type_name_array_size; i++) {
+    if (strcmp(identifier_name, type_name_array[i]) == 0) {
+      return TYPE_NAME;
+    }
+  }
+
+  ...
+}
+\end{minted}
+\quad lex에서 식별자를 읽었을 때, 만약 type name 심볼 테이블에 존재하는 식별자라면 TYPE\_NAME 토큰을 돌려주도록 하였습니다.
+
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+type_specifier
+  : VOID
+  | CHAR {nowType = 1; /*char = 1*/}
+  | SHORT
+  | INT  {nowType = 0; /* int = 0*/}
+  | LONG
+  | FLOAT
+  | DOUBLE
+  | SIGNED
+  | UNSIGNED
+  | struct_or_union_specifier
+  | enum_specifier
+  | TYPE_NAME
+  ;
+}
+\end{minted}
+그렇게 인식한 TYPE\_NAME 토큰은 다른 type 토큰들과 동일하게 처리됩니다.
+
+\subsubsection{주석문}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+...
+COMMENT (\/\/).*\n|(\/\*(.|[\r\n])*?\*\/)
+
+%%
+{COMMENT} {}
+#define {return DEFINE;}
+"char"  {return CHAR;}
+"short" {return SHORT;}
+...
+\end{minted}
+\quad주석은 소스 코드 안에서 모든 코드를 처리하지 않도록 해야 하므로, lex에서 제일 먼저 토큰으로 잡아주었습니다.
+
+
+\section{소스코드}
+\subsection{Lex}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+%{
+#include <stdio.h>
+#include <string.h>
+#include "y.tab.h"
+//#define DEBUG 1
+
+// typdedef 심볼테이블
+extern char* type_name_array[1000];
+extern int type_name_array_size;         
+
+// #define constant 심볼테이블
+extern char* define_name_array[1000];
+extern int define_name_array_size;
+
+// #define string literal 심볼테이블
+extern char* str_define_name_array[1000];
+extern int str_define_name_array_size;
+
+// 현재 보고 있는 식별자의 이름
+extern char* identifier_name;             
+%}
+
+D [0-9]
+L [a-zA-Z_]
+H [a-fA-F0-9]
+E [Ee][+-]?{D}+
+FS (f|F|l|L)
+IS (u|U|l|L)*
+INCLUDE #(include).*\n
+COMMENT (\/\/).*\n|(\/\*(.|[\r\n])*?\*\/)
+
+%%
+{COMMENT} {}
+#define {return DEFINE;}
+"char"  {return CHAR;}
+"short" {return SHORT;}
+"int" {return INT;}
+"long" {return LONG;}
+"signed" {return SIGNED;}
+"unsigned" {return UNSIGNED;}
+"float" {return FLOAT;}
+"double" {return DOUBLE;}
+"const" {return CONST;}
+"volatile" {return VOLATILE;}
+"void" {return VOID;}
+
+"auto"  {return AUTO;}
+
+"enum" {return ENUM;}
+"register" {return REGISTER;}
+"static" {return STATIC;}
+
+"break" {return BREAK;}
+"case"  {return CASE;}
+"continue" {return CONTINUE;}
+"default" {return DEFAULT;}
+"do"  {return DO;}
+"else" {return ELSE;}
+"extern" {return EXTERN;}
+"for" {return FOR;}
+"goto" {return GOTO;}
+"if" {return IF;}
+"return" {return RETURN;}
+"sizeof" {return SIZEOF;}
+
+"struct" {return STRUCT;}
+"switch" {return SWITCH;}
+"typedef" {return TYPEDEF;}
+"union" {return UNION;}
+"while" {return WHILE;}
+
+{L}({L}|{D})* {
+  // 식별자를 발견했을 때, 우선 토큰으로 잡은 이름을 identifier_name에 저장한다.
+  // strdup() 함수는 yytext가 가리키는 문자열을 다른 별도의 메모리 공간으로 복사한다
+  // yytext에는 매번 현재 읽은 토큰의 값이 들어가므로, 그 포인터 주소를 바로 저장할 수 없기 때문이다.
+  identifier_name = strdup(yytext);
+  
+  #if DEBUG
+    printf("identifier: %s\n\n", identifier_name);
+  #endif
+
+  // type name symbol table에 현재 읽은 식별자가 있는지 확인
+  for (int i = 0; i < type_name_array_size; i++) {
+    if (strcmp(identifier_name, type_name_array[i]) == 0) {
+      #if DEBUG
+        printf("type name : %s\n\n", identifier_name);
+      #endif
+      return TYPE_NAME;
+    }
+  }
+
+  // 식별자가 현재 #define constant 심볼 테이블에 있는지 확인
+  for (int i = 0; i < define_name_array_size; i++) {
+    if (strcmp(identifier_name, define_name_array[i]) == 0) {
+      #if DEBUG
+        printf("define name : %s\n\n", identifier_name);
+      #endif
+      return CONSTANT;
+    }
+  }
+
+  // 식별자가 현재 #define 문자열 리터럴 심볼 테이블에 있는지 확인
+  for (int i = 0; i < str_define_name_array_size; i++) {
+    if (strcmp(identifier_name, str_define_name_array[i]) == 0) {
+      #if DEBUG
+        printf("define name : %s\n\n", identifier_name);
+      #endif
+      return STRING_LITERAL;
+    }
+  }
+
+  return IDENTIFIER;
+}
+0[xX]{H}+{IS}? {return CONSTANT;}
+0{D}+{IS}? {return CONSTANT;}
+{D}+{IS}? {return CONSTANT;}
+L?'(\\.|[^\\'])+' {return CONSTANT;}
+{D}+{E}{FS}? {return CONSTANT;}
+{D}*"."{D}+({E})?{FS}? {return CONSTANT;} 
+{D}+"."{D}*({E})?{FS}? {return CONSTANT;} 
+
+L?\"(\\.|[^\\"])*\" {return STRING_LITERAL;}
+
+"..." {return ELLIPSIS;}
+
+">>=" {return RIGHT_ASSIGN;}
+"<<=" {return LEFT_ASSIGN;}
+"+="  {return ADD_ASSIGN;}
+"-="  {return SUB_ASSIGN;}
+"*="  {return MUL_ASSIGN;}
+"/="  {return DIV_ASSIGN;}
+"%="  {return MOD_ASSIGN;}
+"&="  {return AND_ASSIGN;}
+"^="  {return XOR_ASSIGN;}
+"|="  {return OR_ASSIGN;}
+
+">>" {return RIGHT_OP;}
+"<<" {return LEFT_OP;}
+"++" {return INC_OP;}
+"--" {return DEC_OP;}
+"->" {return PTR_OP;}
+"&&" {return AND_OP;}
+"||" {return OR_OP;}
+"<=" {return LE_OP;}
+">=" {return GE_OP;}
+"==" {return EQ_OP;}
+"!=" {return NE_OP;}
+
+"("   {return '(';}
+")"   {return ')';}
+";"   {return ';';}
+":"   {return ':';}
+","   {return ',';}
+"="   {return '=';}
+"."   {return '.';}
+"&"   {return '&';}
+"!"   {return '!';}
+"~"   {return '~';}
+"-"   {return '-';}
+"+"   {return '+';}
+"*"   {return '*';}
+"/"   {return '/';}
+"%"   {return '%';}
+"<"   {return '<';}
+">"   {return '>';}
+"^"   {return '^';}
+"|"   {return '|';}
+"?"   {return '?';}
+("{"|"<%") {return '{';}
+("}"|"%>") {return '}';}
+("["|"<:") {return '[';}
+("]"|":>") {return ']';}
+
+{INCLUDE} {; }
+[\t\v\n\f .]  {;}
+. {}
+
+%%
+
+int yywrap(void) {
+  return 1;
+}
+\end{minted}
+
+\subsection{Yacc}
+\begin{minted}[frame=single, framesep=10pt, breaklines=true, fontsize=\small, linenos=true]{c}
+%{
+#include <stdio.h>
+// #define YYDEBUG 1
+int ary[9] = {0,0,0,0,0,0,0,0,0};
+
+// ary[] 배열에 가리킬 인덱스를 알기 쉽도록 정의
+#define FUNC_CNT 0
+#define OP_CNT 1
+#define INT_CNT 2
+#define CHAR_CNT 3
+#define POINTER_CNT 4
+#define ARRAY_CNT 5
+#define SELECTION_CNT 6
+#define LOOP_CNT 7
+#define RETURN_CNT 8
+
+// 반복문에서 else, else if 를 카운트 하지 않기 위해 사용하는 체크 변수
+int isSelection = 0;
+
+// int, char 타입 체크용도, int = 0, char = 1, 이외 타입에는 -1 을 저장
+int nowType = -1;
+int initVarCount = 0; // int a, b 와 같이 한번에 여러 변수를 생성할 때의 변수의 개수
+
+int isPointer = 0; // pointer 여부 체크
+int isArray = 0;   // 배열 여부 체크
+
+int isFunctionDeclaration = 0; // 함수 전방 선언 체크
+int intParameterCount = 0;     // int 파라미터 개수 체크
+int charParameterCount = 0;    // char 파라미터 개수 체크
+int pointerParameterCount = 0; // pointer 파라미터 개수 체크
+
+// typedef
+char* identifier_name;         // lex에서 읽은 IDENTIFIER의 실제 이름
+int isTypeDef = 0;             // typedef 여부 체크
+
+char* type_name_array[1000];   // type name 심볼 테이블 역할 배열
+int type_name_array_size = 0;
+
+char* define_name_array[1000]; // #define 상수 심볼 테이블 역할 배열
+int define_name_array_size = 0;
+
+char* str_define_name_array[1000]; // #define 문자열 리터럴 심볼 테이블 역할 배열
+int str_define_name_array_size = 0;
+
+int isPointerFunction = 0; // 함수 포인터 가능성 여부 체크
+
+int yylex();
+%}
+
+%token IDENTIFIER CONSTANT STRING_LITERAL SIZEOF DEFINE
+%token PTR_OP INC_OP DEC_OP LEFT_OP RIGHT_OP LE_OP GE_OP EQ_OP NE_OP
+%token AND_OP OR_OP MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN ADD_ASSIGN
+%token SUB_ASSIGN LEFT_ASSIGN RIGHT_ASSIGN AND_ASSIGN
+%token XOR_ASSIGN OR_ASSIGN TYPE_NAME
+
+%token TYPEDEF EXTERN STATIC AUTO REGISTER
+%token CHAR SHORT INT LONG SIGNED UNSIGNED FLOAT DOUBLE CONST VOLATILE VOID
+%token STRUCT UNION ENUM ELLIPSIS
+%token CASE DEFAULT IF ELSE SWITCH WHILE DO FOR GOTO CONTINUE BREAK RETURN
+
+%start translation_unit
+
+%%
+translation_unit
+  : external_declaration
+  | translation_unit external_declaration
+  ; // OK
+
+external_declaration
+  : function_definition {
+      #if YYDEBUG
+        printf("\n함수 정의부 카운트 \n\n");
+      #endif
+
+      ary[FUNC_CNT]++;
+
+      #if YYDEBUG
+        printf("int형 파라미터 %d 개\n", intParameterCount);
+      #endif
+      ary[INT_CNT] += intParameterCount;
+      intParameterCount = 0;
+
+      #if YYDEBUG
+        printf("char형 파라미터 %d 개\n", charParameterCount);
+      #endif
+      ary[CHAR_CNT] += charParameterCount;
+      charParameterCount = 0;
+
+      #if YYDEBUG
+        printf("pointer형 파라미터 %d 개\n\n", pointerParameterCount);
+      #endif
+      ary[POINTER_CNT] += pointerParameterCount;
+      pointerParameterCount = 0;
+    }
+  | declaration {
+      if (isFunctionDeclaration == 1) { // 함수 전방 선언은 무시한다.
+        #if YYDEBUG
+          printf("\n함수의 전방 선언은 무시합니다.\n");
+        #endif
+        
+        intParameterCount = 0;
+        charParameterCount = 0;
+        pointerParameterCount = 0;
+      } else {
+        if (isPointer) {
+          ary[POINTER_CNT] += initVarCount;          
+        }
+      }
+
+      initVarCount = 0;
+      isPointer = 0;
+      isFunctionDeclaration = 0;
+    }
+  | DEFINE IDENTIFIER CONSTANT { // "#define 식별자 상수" 처리
+    #if YYDEBUG
+      printf("add define : %s\n\n", identifier_name);
+    #endif
+    define_name_array[define_name_array_size++] = identifier_name;
+  }
+  | DEFINE IDENTIFIER STRING_LITERAL { // "#define 식별자 문자열" 처리
+    #if YYDEBUG
+      printf("add str define : %s\n\n", identifier_name);
+    #endif
+    str_define_name_array[str_define_name_array_size++] = identifier_name;
+  }
+  ; // OK
+
+function_definition
+  : declaration_specifiers declarator declaration_list compound_statement
+  | declaration_specifiers declarator compound_statement
+  | declarator declaration_list compound_statement
+  | declarator compound_statement
+  ; // OK
+
+declaration
+  : declaration_specifiers ';'
+  | declaration_specifiers init_declarator_list ';' {
+      if (isTypeDef) { // typedef 키워드가 등장했었다면, 새로운 타입에 대한 선언이다.
+        #if YYDEBUG
+          printf("add type : %s\n\n", identifier_name);
+        #endif
+        type_name_array[type_name_array_size] = identifier_name;
+        type_name_array_size++;
+        isTypeDef = 0;
+      } else { // 아니라면 변수/함수에 대한 선언이다.
+        if (isPointer) {
+          ary[POINTER_CNT] += initVarCount;
+        }
+        if (nowType == 0) {
+          /* int 변수 카운트 */
+          #if YYDEBUG
+            printf("\nint 변수 선언: %d개\n\n", initVarCount);
+          #endif
+          ary[INT_CNT] += initVarCount;
+
+        } else if (nowType == 1) {
+          /* char 변수 카운트 */
+          #if YYDEBUG
+            printf("\nchar 변수 선언: %d개\n\n", initVarCount);
+          #endif
+          ary[CHAR_CNT] += initVarCount;
+        }
+      }
+
+      initVarCount = 0;
+      isPointer = 0;
+      nowType = -1;
+      isTypeDef = 0;
+    }
+  ;
+
+init_declarator_list
+  : init_declarator                           { initVarCount++; }
+  | init_declarator_list ',' init_declarator  { initVarCount++; }
+  ;
+
+init_declarator
+  : declarator
+  | declarator '=' initializer { ary[OP_CNT]++; }
+  ;
+
+initializer
+  : assignment_expression
+  | '{' initializer_list '}'
+  | '{' init_declarator_list ',' '}'
+  ;
+
+initializer_list
+  : initializer
+  | initializer_list ',' initializer
+
+// IDENTIFIER //
+identifier_list
+  : IDENTIFIER
+  | identifier_list ',' IDENTIFIER
+  ;
+
+// TYPE //
+type_specifier
+  : VOID
+  | CHAR {nowType = 1; /*char = 1*/}
+  | SHORT
+  | INT  {nowType = 0; /* int = 0*/}
+  | LONG
+  | FLOAT
+  | DOUBLE
+  | SIGNED
+  | UNSIGNED
+  | struct_or_union_specifier
+  | enum_specifier
+  | TYPE_NAME
+  ;
+
+type_qualifier
+  : CONST
+  | VOLATILE
+  ;
+
+specifier_qualifier_list
+  : type_specifier specifier_qualifier_list
+  | type_specifier
+  | type_qualifier specifier_qualifier_list
+  | type_qualifier
+  ;
+
+type_name
+  : specifier_qualifier_list
+  | specifier_qualifier_list abstract_delarator
+  ;
+
+pointer
+  : '*' { isPointer = 1; }
+  | '*' type_qualifier_list
+  | '*' pointer
+  | '*' type_qualifier_list pointer
+  ;
+
+type_qualifier_list
+  : type_qualifier
+  | type_qualifier_list type_qualifier
+  ;
+
+// STRUCT //
+struct_or_union_specifier
+  : struct_or_union IDENTIFIER '{' struct_declaration_list '}'
+  | struct_or_union '{' struct_declaration_list '}'
+  | struct_or_union IDENTIFIER
+  ;
+
+struct_or_union
+  : STRUCT { nowType = -1; } // struct 타입이 등장하였으므로 int, char 타입 체크 해제
+  | UNION
+  ;
+
+struct_declaration_list
+  : struct_declaration
+  | struct_declaration_list struct_declaration
+  ;
+
+struct_declaration
+  : specifier_qualifier_list struct_declarator_list ';' {
+      if (isPointer) {
+        ary[POINTER_CNT] += initVarCount;
+      }
+      if (nowType == 0) {
+        /* int 변수 카운트 */
+        #if YYDEBUG
+          printf("init int: %d\n\n", initVarCount);
+        #endif
+        ary[INT_CNT] += initVarCount;
+      } else if (nowType == 1) {
+        /* char 변수 카운트 */
+        #if YYDEBUG
+          printf("init char: %d\n\n", initVarCount);
+        #endif
+        ary[CHAR_CNT] += initVarCount;
+      }
+
+      initVarCount = 0;
+      isPointer = 0;
+      nowType = -1;
+  }
+  ;
+
+struct_declarator_list
+  : struct_declarator {initVarCount++;}
+  | struct_declarator_list ',' struct_declarator {initVarCount++;}
+  ;
+
+struct_declarator
+  : declarator
+  | ':' constant_expression
+  | declarator ':' constant_expression
+  ;
+
+// OPERATOR //
+unary_operator
+  : '&'
+  | '*'
+  | '+'
+  | '-'
+  | '~'
+  | '!'
+  ;
+
+assignment_operator
+  : '='
+  | MUL_ASSIGN
+  | DIV_ASSIGN
+  | MOD_ASSIGN
+  | ADD_ASSIGN
+  | SUB_ASSIGN
+  | LEFT_ASSIGN
+  | RIGHT_ASSIGN
+  | AND_ASSIGN
+  | XOR_ASSIGN
+  | OR_ASSIGN
+  ;
+
+
+// EXPRESSION //
+expression
+  : assignment_expression
+  | expression ',' assignment_expression
+  ;
+
+constant_expression
+  : conditional_expression
+  ;
+
+assignment_expression
+  : conditional_expression
+  | unary_expression assignment_operator assignment_expression { ary[OP_CNT]++; }
+  ;
+
+conditional_expression
+  : logical_or_expression
+  | logical_or_expression '?' expression ':' conditional_expression
+  ;
+
+cast_expression
+  : unary_expression
+  | '(' type_name ')' cast_expression { ary[OP_CNT]++; }
+  ;
+
+unary_expression
+  : postfix_expression
+  | INC_OP unary_expression { ary[OP_CNT]++; }
+  | DEC_OP unary_expression { ary[OP_CNT]++; }
+  | unary_operator cast_expression
+  | SIZEOF unary_expression
+  | SIZEOF '(' type_name ')'
+  ;
+
+postfix_expression
+  : primary_expression
+  | postfix_expression '[' expression ']'
+  | postfix_expression '(' ')'                          { ary[FUNC_CNT]++; /*함수 호출*/ }
+  | postfix_expression '(' argument_expression_list ')' { ary[FUNC_CNT]++; /*함수 호출*/ }
+  | postfix_expression '.' IDENTIFIER { ary[OP_CNT]++; }
+  | postfix_expression PTR_OP IDENTIFIER { ary[OP_CNT]++; }
+  | postfix_expression INC_OP { ary[OP_CNT]++; }
+  | postfix_expression DEC_OP { ary[OP_CNT]++; }
+
+primary_expression
+  : IDENTIFIER
+  | CONSTANT
+  | STRING_LITERAL
+  | '(' expression ')'
+  ;
+
+argument_expression_list
+  : assignment_expression
+  | argument_expression_list ',' assignment_expression
+  ;
+
+
+// EXPRESSION WITH OPERATOR //
+logical_or_expression
+  : logical_and_expression
+  | logical_or_expression OR_OP logical_and_expression { ary[OP_CNT]++; }
+  ;
+
+logical_and_expression
+  : inclusive_or_expression
+  | logical_and_expression AND_OP inclusive_or_expression { ary[OP_CNT]++; }
+  ;
+
+inclusive_or_expression
+  : exclusive_or_expression
+  | inclusive_or_expression '|' exclusive_or_expression { ary[OP_CNT]++; }
+  ;
+
+exclusive_or_expression
+  : and_expression
+  | exclusive_or_expression '^' and_expression { ary[OP_CNT]++; }
+  ;
+
+and_expression
+  : equality_expression 
+  | and_expression '&' equality_expression { ary[OP_CNT]++; }
+  ;
+
+equality_expression
+  : relational_expression
+  | equality_expression EQ_OP relational_expression { ary[OP_CNT]++; }
+  | equality_expression NE_OP relational_expression { ary[OP_CNT]++; }
+  ;
+
+relational_expression
+  : shift_expression
+  | relational_expression '<' shift_expression { ary[OP_CNT]++; }
+  | relational_expression '>' shift_expression { ary[OP_CNT]++; }
+  | relational_expression LE_OP shift_expression { ary[OP_CNT]++; }
+  | relational_expression GE_OP shift_expression { ary[OP_CNT]++; }
+  ;
+
+shift_expression
+  : additive_expression
+  | shift_expression LEFT_OP additive_expression { ary[OP_CNT]++; }
+  | shift_expression RIGHT_OP additive_expression { ary[OP_CNT]++; }
+  ;
+
+additive_expression
+  : multiplicative_expression
+  | additive_expression '+' multiplicative_expression { ary[OP_CNT]++; }
+  | additive_expression '-' multiplicative_expression { ary[OP_CNT]++; }
+  ;
+
+multiplicative_expression
+  : cast_expression
+  | multiplicative_expression '*' cast_expression { ary[OP_CNT]++; }
+  | multiplicative_expression '/' cast_expression { ary[OP_CNT]++; }
+  | multiplicative_expression '%' cast_expression { ary[OP_CNT]++; }
+  ;
+
+
+// DECLARATOR //
+declarator
+  : pointer direct_declarator { if (isArray) {ary[ARRAY_CNT]++; isArray = 0;} }
+  | direct_declarator         { if (isArray) {ary[ARRAY_CNT]++; isArray = 0;} }
+  ;
+
+direct_declarator
+  : IDENTIFIER
+  | '(' declarator ')' {
+    if (isPointer) {
+      ary[POINTER_CNT]++;
+      isPointer = 0;
+      isPointerFunction = 1; // 포인터 함수 선언의 가능성이 있다.
+    } /* 무조건 변수를 나타낸다. */
+  }
+  | direct_declarator '[' constant_expression ']' { isArray = 1; }
+  | direct_declarator '[' ']' { isArray = 1; }
+  | direct_declarator '(' parameter_list ')'  {
+      if (isPointerFunction == 1) {
+        ary[FUNC_CNT]++;
+        isPointerFunction = 0;
+        #if YYDEBUG
+          printf("\n함수 포인터 선언\n\n");
+        #endif
+      } else if (isFunctionDeclaration == 0) {
+        isFunctionDeclaration = 1;
+      }
+    }
+  | direct_declarator '(' identifier_list ')' { /*isFunctionDeclaration = 1;*/ } // ANSI C 문법, 테케에 없음.
+  | direct_declarator '(' ')'                 { if (isFunctionDeclaration == 0) isFunctionDeclaration = 1; }
+  ;
+
+abstract_delarator
+  : pointer
+  | direct_abstract_declarator          { if (isArray) {ary[ARRAY_CNT]++; isArray = 0;} }
+  | pointer direct_abstract_declarator  { if (isArray) {ary[ARRAY_CNT]++; isArray = 0;} }
+  ;
+
+direct_abstract_declarator
+  : '(' abstract_delarator ')'
+  | '[' ']' { isArray = 1; }
+  | '[' constant_expression ']' { isArray = 1; }
+  | direct_abstract_declarator '[' ']'
+  | direct_abstract_declarator '[' constant_expression ']'
+  | '(' ')'
+  | '(' parameter_type_list ')'
+  | direct_abstract_declarator '(' ')'
+  | direct_abstract_declarator '(' parameter_type_list ')'
+  ;
+
+// PARAMETER //
+parameter_declaration
+  : declaration_specifiers declarator {
+      if (nowType == 0) {
+        intParameterCount++;
+      } else if (nowType == 1) {
+        charParameterCount++;
+      }
+
+      if (isPointer == 1) {
+        pointerParameterCount++;
+      }
+
+      nowType = -1; 
+      isPointer = 0;
+    }
+  | declaration_specifiers abstract_delarator {
+      #if YYDEBUG
+        printf("추상");
+      #endif
+      if (nowType == 0) {
+        intParameterCount++;
+      } else if (nowType == 1) {
+        charParameterCount++;
+      }
+
+      if (isPointer == 1) {
+        pointerParameterCount++;
+      }
+      
+      nowType = -1; 
+      isPointer = 0;
+    }   
+  | declaration_specifiers  /* 파라미터 변수는 아니고 선언만 있으면 세지 않는다. */ {
+    if (nowType == 0) {
+      #if YYDEBUG
+        printf("\nint 형 파라미터 타입만 선언\n\n");
+      #endif
+    } else if (nowType == 1) {
+      #if YYDEBUG
+        printf("\nchar 형 파라미터 타입만 선언\n\n");
+      #endif
+    }
+
+    isPointer = 0;
+    nowType = -1;
+  }
+  ;
+
+parameter_list
+  : parameter_declaration
+  | parameter_list ',' parameter_declaration
+  ;
+
+parameter_type_list
+  : parameter_list
+  | parameter_list ',' ELLIPSIS
+  ;
+
+// DECLARATION //
+declaration_list
+  : declaration  
+  | declaration_list declaration
+  ; // OK
+
+storage_class_specifier
+  : TYPEDEF { isTypeDef = 1; }
+  | EXTERN
+  | STATIC
+  | AUTO
+  | REGISTER
+  ;
+
+declaration_specifiers
+  : storage_class_specifier
+  | storage_class_specifier declaration_specifiers { /* type def */}
+  | type_specifier { isPointer = 0; } // 타입이 나오면 기존 포인터 체크는 변수에 쓰인 포인터가 아님
+  | type_specifier declaration_specifiers
+  | type_qualifier
+  | type_qualifier declaration_specifiers
+  ;
+
+enum_specifier
+  : ENUM '{' enumerator_list '}'
+  | ENUM IDENTIFIER '{' enumerator_list '}'
+  | ENUM IDENTIFIER
+  ;
+
+enumerator_list
+  : enumerator
+  | enumerator_list ',' enumerator
+  ;
+
+enumerator
+  : IDENTIFIER
+  | IDENTIFIER '=' constant_expression { ary[OP_CNT]++; }
+  ;
+
+// STATEMENT //
+compound_statement
+  : '{' '}'
+  | '{' statement_list '}'
+  /* | '{' declaration_list '}' // declaration_statement  // test
+  | '{' declaration_list statement_list '}' // 여기에서 둘 사이에 순서를 없애주어야 함. */
+  ; // OK
+
+statement_list
+  : statement                 { if (isSelection) {ary[SELECTION_CNT]++; isSelection = 0; } }
+  | statement_list statement  { if (isSelection) {ary[SELECTION_CNT]++; isSelection = 0; } }
+  ; // OK
+
+statement
+  : labeled_statement
+  | compound_statement
+  | declaration_or_expression_statement
+  //| expression_statement { printf("\n\nend line\n\n"); }
+  | selection_statement { isSelection = 1; }
+  | iteration_statement { ary[LOOP_CNT]++; }
+  | jump_statement
+  ;
+
+labeled_statement
+  : IDENTIFIER ':' statement
+  | CASE constant_expression ':' statement
+  | DEFAULT ':' statement
+  ; // OK
+
+declaration_or_expression_statement
+  : expression_statement
+  | declaration
+  ;
+
+expression_statement
+  : ';'
+  | expression ';'
+  ; // OK
+
+selection_statement
+  : IF '(' expression ')' statement
+  | IF '(' expression ')' statement ELSE statement
+  | SWITCH '(' expression ')' statement
+  ;
+
+iteration_statement
+  : WHILE '(' expression ')' statement
+  | DO statement WHILE '(' expression ')' ';'
+  //| FOR '(' expression_statement expression_statement ')' statement
+  //| FOR '(' expression_statement expression_statement expression ')' statement
+  | FOR '(' declaration_or_expression_statement expression_statement ')' statement
+  | FOR '(' declaration_or_expression_statement expression_statement expression ')' statement
+  ;
+
+jump_statement
+  : GOTO IDENTIFIER ';'
+  | CONTINUE ';'
+  | BREAK ';'
+  | RETURN ';'            { ary[RETURN_CNT]++; }
+  | RETURN expression ';' { ary[RETURN_CNT]++; }
+  ; // OK
+
+%%
+
+int main(void)
+{
+  #if YYDEBUG
+    yydebug = 1;
+  #endif
+	yyparse();
+	printf("function = %d\n", ary[0]);
+	printf("operator = %d\n", ary[1]);
+	printf("int = %d\n", ary[2]);
+	printf("char = %d\n", ary[3]);
+	printf("pointer = %d\n", ary[4]);
+	printf("array = %d\n", ary[5]);
+	printf("selection = %d\n", ary[6]);
+	printf("loop = %d\n", ary[7]);
+	printf("return = %d\n", ary[8]);
+	return 0;
+}
+
+void yyerror(const char *str)
+{
+	fprintf(stderr, "error: %s\n", str);
+}
+
+\end{minted}
+\end{document}
